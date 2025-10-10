@@ -13,7 +13,9 @@ logging.basicConfig(
 
 # --- SQLite DB Setup ---
 #conn = sqlite3.connect("trades.db", check_same_thread=False)
-conn = sqlite3.connect("/data/trades.db", check_same_thread=False)
+conn = sqlite3.connect("trades.db", check_same_thread=False)
+
+#conn = sqlite3.connect("/data/trades.db", check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS trades (
