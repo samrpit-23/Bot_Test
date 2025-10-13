@@ -1,69 +1,57 @@
-import requests
 import sqlite3
 import time
-from datetime import datetime
+from datetime import datetime,timedelta,timezone
 import logging
+from helper import update_fvg_table
 
-# --- Logging Setup ---
-logging.basicConfig(
-    filename='bot.log',
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 
+db_path =r"""C:\Users\sit456\Desktop\JyBot\bot.db"""
 # --- SQLite DB Setup ---
 #conn = sqlite3.connect("trades.db", check_same_thread=False)
-conn = sqlite3.connect("trades.db", check_same_thread=False)
+conn = sqlite3.connect(db_path, check_same_thread=False)
 
 #conn = sqlite3.connect("/data/trades.db", check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("""
-CREATE TABLE IF NOT EXISTS trades (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    symbol TEXT,
-    signal TEXT,
-    price REAL,
-    timestamp TEXT
+CREATE TABLE IF NOT EXISTS FairValueGaps (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    Symbol TEXT NOT NULL,
+    ActiveTime TEXT,              -- Timestamp or datetime (ISO 8601 string)
+    FVGStart REAL,                -- Price level (start)
+    FVGEnd REAL,                  -- Price level (end)
+    Direction TEXT,               -- 'Bullish' / 'Bearish'
+    FVGType TEXT,                 -- e.g. 'Standard', 'Extended', etc.
+    TimeFrame TEXT,               -- e.g. '1m', '5m', '1h', '1D'
+    Duration INTEGER,             -- Duration in candles or minutes
+    GapSize REAL,                 -- Percentage value (e.g. 1.25 for 1.25%)
+    DistanceFromVWAP REAL,        -- Percentage value (e.g. 0.75 for 0.75%)
+    IsActive INTEGER DEFAULT 1,   -- 1 = Active, 0 = Inactive
+    IsRetested INTEGER DEFAULT 0, -- 1 = Retested, 0 = Not Retested
+    Priority INTEGER              -- Priority ranking or weight
 )
 """)
 conn.commit()
 
-API_URL = "https://api.delta.exchange/v2/tickers/BTCUSD"
-
-def fetch_price():
-    try:
-        response = requests.get(API_URL, timeout=5)
-        response.raise_for_status()
-        data = response.json()
-        return float(data['result']['mark_price'])
-    except Exception as e:
-        logging.error(f"Error fetching price: {e}")
-        return None
-
-def strategy(price):
-    # Simple placeholder strategy
-    if price < 60000:
-        return "BUY"
-    elif price > 119000:
-        return "SELL"
-    return None
-
 def run_bot():
     while True:
-        price = fetch_price()
-        if price:
-            signal = strategy(price)
-            logging.info(f"Price: {price}, Signal: {signal}")
+        update_fvg_table(db_path, "BTCUSD", timeframe="5m")
 
-            if signal:
-                cursor.execute(
-                    "INSERT INTO trades (symbol, signal, price, timestamp) VALUES (?, ?, ?, ?)",
-                    ("BTCUSD", signal, price, datetime.now().isoformat())
-                )
-                conn.commit()
-                logging.info(f"Trade stored: {signal} at {price}")
+        # Calculate next 5-minute mark
+        IST = timezone(timedelta(hours=5, minutes=30))
+        now = datetime.now(IST)
+        print(now)
+        # Round up to next 5-minute mark
+        next_minute = (now.minute // 5 + 1) * 5
+        next_run = now.replace(minute=0, second=0, microsecond=0) + timedelta(minutes=next_minute)
+        
+        # If next_run goes to next hour
+        if next_minute >= 60:
+            next_run = next_run.replace(hour=now.hour + 1, minute=0)
 
-        time.sleep(60)  # Wait 1 minute
+        sleep_seconds = (next_run - datetime.now(timezone(timedelta(hours=5, minutes=30)))).total_seconds()
+        print(sleep_seconds)
+        time.sleep(sleep_seconds)
+        
 
 if __name__ == "__main__":
     logging.info("Trading bot started.")
