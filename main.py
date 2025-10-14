@@ -32,24 +32,31 @@ CREATE TABLE IF NOT EXISTS FairValueGaps (
 """)
 conn.commit()
 
+# Define IST timezone
+IST = timezone(timedelta(hours=5, minutes=30))
+
 def run_bot():
+    time_offset = timedelta(seconds=173)  # system clock leads by 173 seconds
+
     while True:
         update_fvg_table(db_path, "BTCUSD", timeframe="5m")
 
-        # Calculate next 5-minute mark
-        IST = timezone(timedelta(hours=5, minutes=30))
-        now = datetime.now(IST)
-        print(now)
+        # Get corrected time (subtract offset)
+        now = datetime.now(IST) - time_offset
+        print("Corrected time:", now)
+
         # Round up to next 5-minute mark
         next_minute = (now.minute // 5 + 1) * 5
         next_run = now.replace(minute=0, second=0, microsecond=0) + timedelta(minutes=next_minute)
-        
-        # If next_run goes to next hour
+
+        # Handle hour rollover
         if next_minute >= 60:
             next_run = next_run.replace(hour=now.hour + 1, minute=0)
 
-        sleep_seconds = (next_run - datetime.now(timezone(timedelta(hours=5, minutes=30)))).total_seconds()
-        print(sleep_seconds)
+        # Compute sleep time based on corrected time
+        sleep_seconds = (next_run - (datetime.now(IST) - time_offset)).total_seconds()
+
+        print(f"Next run at: {next_run}, sleeping for {sleep_seconds:.2f} seconds")
         time.sleep(sleep_seconds)
         
 
