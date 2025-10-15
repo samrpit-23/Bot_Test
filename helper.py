@@ -4,7 +4,7 @@ import requests
 from datetime import datetime, timedelta,timezone
 import numpy as np
 import sqlite3
-
+from pytz import timezone as tz
 # --- VWAP calculation ---
 def add_vwap(df):
     typical_price = (df["High"] + df["Low"] + df["Close"]) / 3
@@ -76,7 +76,8 @@ def fetch_delta_ohlc(symbol: str, resolution: str, hours: int, rate_limit: float
 
     df = pd.concat(all_batches).drop_duplicates(subset='OpenTime').sort_values('OpenTime').reset_index(drop=True)
     # Assuming df is already sorted by OpenTime
-    df = df.iloc[:-1].reset_index(drop=True)
+    if resolution != "1m":
+        df = df.iloc[:-1].reset_index(drop=True)
     return add_vwap(df)
 
 def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m"):
@@ -92,7 +93,7 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m"):
         symbol: str - symbol name (e.g. "BANKNIFTY")
         timeframe: str - e.g. "5m"
     """
-    ohlc_df = fetch_delta_ohlc("BTCUSD", "5m", hours=24, rate_limit=0.3)
+    ohlc_df = fetch_delta_ohlc("BTCUSD", "5m", hours=24, rate_limit=0.2)
     
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -173,10 +174,13 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m"):
 
     # --- 3️⃣ Insert new FVGs (avoid duplicates) ---
     for fvg in new_fvgs:
+
         exists = cur.execute("""
             SELECT 1 FROM FairValueGaps 
             WHERE Symbol=? AND TimeFrame=? AND FVGStart=? AND FVGEnd=? AND Direction=? 
-        """, (symbol, timeframe, fvg["FVGStart"], fvg["FVGEnd"], fvg["Direction"])).fetchone()
+        """, (
+            fvg["Symbol"], fvg["TimeFrame"], fvg["FVGStart"], fvg["FVGEnd"], fvg["Direction"]
+        )).fetchone()
         
         if not exists:
             cur.execute("""
@@ -193,24 +197,154 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m"):
     for _, fvg in existing_fvgs.iterrows():
         if fvg["IsActive"] == 1:
             # Increment Duration for active FVG
+            IST = tz("Asia/Kolkata")
+
+            # Convert ActiveTime (IST) → UTC
+            active_time_ist = IST.localize(pd.to_datetime(fvg["ActiveTime"]))
+            active_time_utc = active_time_ist.astimezone(timezone.utc)
+            current_time_utc = datetime.now(timezone.utc)
+
+            # Calculate total duration in minutes
+            duration_min = int((current_time_utc - active_time_utc).total_seconds() // 60)
+
+            # Round down to nearest timeframe interval (e.g., 5m)
+            tf_minutes = int(timeframe.replace("m", ""))  # "5m" → 5
+            rounded_duration = (duration_min // tf_minutes) * tf_minutes
+
             cur.execute("""
                 UPDATE FairValueGaps
-                SET Duration = Duration + 5
+                SET Duration = ?
                 WHERE Id = ?
-            """, (fvg["Id"],))
+            """, (rounded_duration, fvg["Id"]))
 
             # Check for fill condition
             recent_close = ohlc_df.iloc[-1]["Close"]
 
             # 🔻 Deactivate Bearish FVG if price closes above its end
             if fvg["Direction"] == "Bearish" and recent_close > fvg["FVGEnd"]:
+                # Deactivate FVG
                 cur.execute("UPDATE FairValueGaps SET IsActive = 0 WHERE Id = ?", (fvg["Id"],))
+                # Deactivate related RetestGap entries
+                cur.execute("UPDATE RetestGap SET IsActive = 0 WHERE FairValueGapId = ?", (fvg["Id"],))
             
             # 🔺 Deactivate Bullish FVG if price closes below its start
             elif fvg["Direction"] == "Bullish" and recent_close < fvg["FVGStart"]:
+                # Deactivate FVG
                 cur.execute("UPDATE FairValueGaps SET IsActive = 0 WHERE Id = ?", (fvg["Id"],))
+                # Deactivate related RetestGap entries
+                cur.execute("UPDATE RetestGap SET IsActive = 0 WHERE FairValueGapId = ?", (fvg["Id"],))
+
 
     conn.commit()
     conn.close()
     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] ✅ FVG table updated successfully for {symbol}.")
 
+def check_and_insert_retest_gaps(symbol,db_path: str):
+    """
+    Checks the latest 1-minute candle to see if it retests the latest active Fair Value Gap (FVG).
+    If retest detected:
+        - Updates FairValueGap.IsRetest = 1
+        - Inserts record into RetestGap
+    If the FVG becomes inactive, marks corresponding RetestGap rows as inactive.
+    
+    Parameters:
+        db_path: str - Path to SQLite database.
+        df_1m: pd.DataFrame - Must contain columns:
+            ['OpenTime', 'Symbol', 'Open', 'High', 'Low', 'Close', 'Volume']
+    """
+
+    df_1m = fetch_delta_ohlc(symbol, "1m", hours=1, rate_limit=0.1)
+    
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+
+    # Step 1: Fetch latest active FairValueGap (IsRetest=0, IsActive=1, TimeFrame=5m)
+    cur.execute("""
+        SELECT Id, Symbol, FVGStart, FVGEnd, Direction, TimeFrame, IsActive
+        FROM FairValueGaps
+        WHERE TimeFrame = '5m'
+          AND IsActive = 1
+          AND IsRetested = 0
+          AND ActiveTime = (
+              SELECT MAX(ActiveTime)
+              FROM FairValueGaps
+              WHERE TimeFrame = '5m'
+                AND IsActive = 1
+          );
+    """)
+    fvg = cur.fetchone()
+
+    if not fvg:
+        print("No active Fair Value Gap found.")
+        conn.close()
+        return
+
+    fvg_id, symbol, fvg_start, fvg_end, direction, timeframe, is_active = fvg
+
+    print(fvg)
+
+    # Step 2: Filter the DataFrame for this symbol
+    df_symbol = df_1m
+
+    if df_symbol.empty:
+        print(f"No 1-min data found for symbol {symbol}.")
+        conn.close()
+        return
+
+    # Step 3: Take only the latest 1-minute candle
+    latest_row = df_symbol.sort_values("OpenTime").iloc[-1]
+    print(latest_row.head())
+
+    # Step 4: Check the retest condition
+    retest_detected = False
+    if direction.lower() == "bullish" and latest_row["Low"] <= fvg_start:
+        retest_detected = True
+    elif direction.lower() == "bearish" and latest_row["High"] >= fvg_start:
+        retest_detected = True
+
+    # Step 5: If retest detected → update FairValueGap & insert into RetestGap
+    if retest_detected:
+        print(f"Retest detected for {symbol} at {latest_row['OpenTime']}")
+
+        # Update FairValueGap.IsRetest
+        cur.execute("""
+            UPDATE FairValueGaps
+            SET IsRetested = 1
+            WHERE Id = ?
+        """, (fvg_id,))
+
+        # Insert new record into RetestGap
+        cur.execute("""
+            INSERT INTO RetestGap (
+                Symbol, OpenTime, FairValueGap, TimeFrame, Direction, Type,
+                Open, High, Low, Close, Volume, IsActive
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+        """, (
+            symbol,
+            latest_row["OpenTime"],
+            fvg_id,
+            timeframe,
+            direction,
+            "-",
+            latest_row["Open"],
+            latest_row["High"],
+            latest_row["Low"],
+            latest_row["Close"],
+            latest_row["Volume"]
+        ))
+
+        conn.commit()
+
+    # Step 6: If the FVG becomes inactive → deactivate its related RetestGap
+    cur.execute("SELECT IsActive FROM FairValueGaps WHERE Id = ?", (fvg_id,))
+    is_active_now = cur.fetchone()
+    if is_active_now and is_active_now[0] == 0:
+        cur.execute("""
+            UPDATE RetestGap
+            SET IsActive = 0
+            WHERE FairValueGap = ?
+        """, (fvg_id,))
+        conn.commit()
+
+    conn.close()
