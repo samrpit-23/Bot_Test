@@ -2,7 +2,7 @@ import sqlite3
 import time
 from datetime import datetime,timedelta,timezone
 import logging
-from helper import update_fvg_table,check_and_insert_retest_gaps
+from helper import update_fvg_table,check_and_insert_retest_gaps,trigger_trade,fetch_delta_ohlc
 
 
 db_path =r"""C:\Users\sit456\Desktop\JyBot\bot.db"""
@@ -53,7 +53,9 @@ def run_bot():
         # --- Run retest check every 1 minute ---
         print(f"[{now.strftime('%H:%M:%S')}] Running check_and_insert_retest_gaps()")
         #df_1m = fetch_latest_1min_data(symbol)  # <-- you must define this function to get latest 1-min candle
-        check_and_insert_retest_gaps(symbol,db_path)
+        df_1m = fetch_delta_ohlc(symbol, "1m", hours=1, rate_limit=0.1)
+        check_and_insert_retest_gaps(symbol,db_path,df_1m)
+        trigger_trade(symbol,db_path,df_1m)
 
         # --- Calculate next 1-minute mark ---
         next_minute = (now.replace(second=0, microsecond=0) + timedelta(minutes=1))
