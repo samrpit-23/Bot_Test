@@ -544,7 +544,7 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
                 # Update existing record for PartialBooked
                 cur.execute("""
                     UPDATE TradeStatus
-                    SET Quantity = Quantity + ?, ExitPrice = ?, Pnl = ?, IsOpen = ?, Timestamp = ?
+                    SET Quantity =  ?, ExitPrice = ?, Pnl = ?, IsOpen = ?, Timestamp = ?
                     WHERE Id = ?
                 """, (booked_qty, exit_price, pnl, is_open_flag, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), existing[0]))
                 print(trade_id)
