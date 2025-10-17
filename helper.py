@@ -436,10 +436,13 @@ def trigger_trade(symbol,db_path: str, df_1m: pd.DataFrame):
 
     print(f"✅ Trade triggered and inserted for {direction.upper()} RetestGap ID {retest_id}")
 
+import sqlite3
+import pandas as pd
+
 def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
     """
-    Updates Trades and logs TradeStatus for PartialBooked, SL, TG trades.
-    Calculates ExitPrice and PnL for TradeStatus and updates IsOpen when trade is closed.
+    Updates TradeStatus for all active trades (PartialBooked, SL, TG).
+    Uses stored ExitPrice in TradeStatus and updates PnL & IsOpen accordingly.
     """
 
     if df_1m.empty:
@@ -447,121 +450,54 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
         return
 
     latest_candle = df_1m.iloc[-1]
-    high = float(latest_candle["High"])
-    low = float(latest_candle["Low"])
-    close = float(latest_candle["Close"])
+    recent_close = float(latest_candle["Close"])
 
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
 
-    # Fetch trades that have remaining lots
+    # Fetch all active trades for symbol
     cur.execute("""
-        SELECT Id, EntryTime, RetestGap, EntryCandle, Open, High, Low, Close, Volume,
-               Direction, CandleType, Stratagy, Lot, RemainingLot, IntialStopLoss, IntialTarget,
-               ModifiedStopLoss, ModifiedTarget
-        FROM Trades
-        WHERE Direction IS NOT NULL AND RemainingLot > 0
-    """)
-    trades = cur.fetchall()
+        SELECT TS.Id, TS.Trade, T.Direction, TS.ExitPrice, BookedQty, Status 
+        FROM TradeStatus TS
+        INNER JOIN Trades T ON TS.Trade = T.Id
+        WHERE IsOpen = 1 AND Symbol = ?
+    """, (symbol,))
+    active_trades = cur.fetchall()
 
-    if not trades:
-        print("no trade found")
+    if not active_trades:
+        print(f"ℹ️ No active trades found for {symbol}")
+        conn.close()
         return
 
-    for trade in trades:
-        (trade_id, _, _, _, entry_open, entry_high, entry_low, entry_close, volume,
-         direction, candle_type, stratagy, lot, remaining_lot, sl, tg, mod_sl, mod_tg) = trade
-
-        total_lot = remaining_lot if remaining_lot else lot
-        status = "Active"
-        new_remaining_lot = total_lot
-        partial_executed = False
-        booked_qty = 0
-        exit_price = None
+    for trade in active_trades:
+        ts_id, trade_id, direction, exit_price, booked_qty, status = trade
+        exit_price = float(exit_price or 0)
+        booked_qty = float(booked_qty or 0)
         pnl = 0
 
-        # --- Bullish ---
-        if direction == "Bullish":
-            if low < sl:
-                status = "SL"
-                new_remaining_lot = 0
-                exit_price = sl
-                pnl = (exit_price - close) * total_lot
-            elif high >= tg:
-                status = "TG"
-                new_remaining_lot = 0
-                exit_price = tg
-                pnl = (exit_price - close) * total_lot
-            elif high >= entry_open + ((tg - entry_open) * 2 / 3):
-                status = "PartialBooked"
-                booked_qty = total_lot / 2
-                new_remaining_lot = total_lot - booked_qty
-                exit_price = entry_open + ((tg - entry_open) * 2 / 3)
-                pnl = (exit_price - close) * booked_qty
-                partial_executed = True
+        # Handle SL or TG closure
+        if status in ("SL", "TG"):
+            if direction == "Bullish":
+                pnl = (exit_price - recent_close) * booked_qty
+            else:  # Bearish
+                pnl = (recent_close - exit_price) * booked_qty
 
-        # --- Bearish ---
-        elif direction == "Bearish":
-            if high > sl:
-                status = "SL"
-                new_remaining_lot = 0
-                exit_price = sl
-                pnl = (close - exit_price) * total_lot
-            elif low <= tg:
-                status = "TG"
-                new_remaining_lot = 0
-                exit_price = tg
-                pnl = (close - exit_price) * total_lot
-            elif low <= entry_open - ((entry_open - tg) * 2 / 3):
-                status = "PartialBooked"
-                booked_qty = total_lot / 2
-                new_remaining_lot = total_lot - booked_qty
-                exit_price = entry_open - ((entry_open - tg) * 2 / 3)
-                pnl = (close - exit_price) * booked_qty
-                partial_executed = True
-
-        # --- Update Trades RemainingLot ---
-        cur.execute("""
-            UPDATE Trades
-            SET RemainingLot = ?, LastModifiedDate = ?
-            WHERE Id = ?
-        """, (new_remaining_lot, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), trade_id))
-
-        # --- Insert or Update TradeStatus ---
-        # Only update/insert for PartialBooked or closed trade
-        if status in ["PartialBooked", "SL", "TG"]:
-            # Check if PartialBooked record exists
             cur.execute("""
-                SELECT Id FROM TradeStatus
-                WHERE Trade = ? AND Status = ?
-            """, (trade_id, "PartialBooked"))
-            existing = cur.fetchone()
+                UPDATE TradeStatus
+                SET PnL = ?, IsOpen = 0, LastModifiedDate = CURRENT_TIMESTAMP
+                WHERE Id = ?
+            """, (pnl, ts_id))
+            print(f"✅ Trade {trade_id} closed ({status}) with PnL {pnl:.2f}")
 
-            quantity_to_log = booked_qty if status == "PartialBooked" else total_lot
-            is_open_flag = 1 if new_remaining_lot > 0 else 0
-
-            if status == "PartialBooked" and existing:
-                # Update existing record for PartialBooked
-                cur.execute("""
-                    UPDATE TradeStatus
-                    SET Quantity =  ?, ExitPrice = ?, Pnl = ?, IsOpen = ?, Timestamp = ?
-                    WHERE Id = ?
-                """, (booked_qty, exit_price, pnl, is_open_flag, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), existing[0]))
-                print(trade_id)
-            else:
-                # Insert new record
-                cur.execute("""
-                    INSERT INTO TradeStatus
-                    (Symbol,Trade, Status, Quantity, EntryPrice, IsOpen, LastModifiedDate)
-                    VALUES (?,?, ?, ?, ?,?, ?)
-                """, (symbol,trade_id, status, quantity_to_log, entry_close,  is_open_flag, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")))
-                print(trade_id)
-
-            if partial_executed:
-                print(f"🔸 Trade {trade_id} partially booked: {booked_qty} booked, {new_remaining_lot} remaining")
-            else:
-                print(f"❌ Trade {trade_id} closed with status {status}, PnL: {pnl}")
+        # Handle Partial Book
+        elif status == "PartialBooked":
+            cur.execute("""
+                UPDATE TradeStatus
+                SET LastModifiedDate = CURRENT_TIMESTAMP
+                WHERE Id = ?
+            """, (ts_id,))
+            print(f"ℹ️ Partial booked updated for Trade {trade_id}")
 
     conn.commit()
     conn.close()
-    print(f"✅ Trade statuses updated for {symbol}")
+    print("🔄 TradeStatus update completed.\n")

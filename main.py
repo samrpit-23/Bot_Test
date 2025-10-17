@@ -56,7 +56,7 @@ def run_bot():
         df_1m = fetch_delta_ohlc(symbol, "1m", hours=1, rate_limit=0.1)
         check_and_insert_retest_gaps(symbol,db_path,df_1m)
         trigger_trade(symbol,db_path,df_1m)
-        update_trade_status(df_1m,symbol,db_path)
+        #update_trade_status(df_1m,symbol,db_path)
         # --- Calculate next 1-minute mark ---
         next_minute = (now.replace(second=0, microsecond=0) + timedelta(minutes=1))
         sleep_seconds = (next_minute - (datetime.now(IST) - time_offset)).total_seconds()
