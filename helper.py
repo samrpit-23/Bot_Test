@@ -174,7 +174,7 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m", ohlc_df=N
             """, (
                 fvg["Symbol"], fvg["ActiveTime"], fvg["FVGStart"], fvg["FVGEnd"],
                 fvg["Direction"], fvg["FVGType"], fvg["TimeFrame"], fvg["Duration"],
-                fvg["GapSize"], fvg["DistanceFromVWAP"], fvg["IsActive"],datetime.now(timezone.utc)
+                fvg["GapSize"], fvg["DistanceFromVWAP"], fvg["IsActive"],datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             ))
 
     # Update Duration and deactivate if filled (use last candle close)
@@ -224,11 +224,12 @@ def check_and_insert_retest_gaps(symbol,db_path: str,df_1m = None):
 
     # Step 1: Fetch latest active FairValueGap (IsRetest=0, IsActive=1, TimeFrame=5m)
     cur.execute("""
-        SELECT Id, Symbol, FVGStart, FVGEnd, Direction, TimeFrame, IsActive
+        SELECT Id, Symbol, ActiveTime,FVGStart, FVGEnd, Direction, TimeFrame, IsActive
         FROM FairValueGaps
         WHERE TimeFrame = '5m'
           AND IsActive = 1
           AND IsRetested = 0
+          AND Duration <> '0'
           AND ActiveTime = (
               SELECT MAX(ActiveTime)
               FROM FairValueGaps
@@ -243,7 +244,7 @@ def check_and_insert_retest_gaps(symbol,db_path: str,df_1m = None):
         conn.close()
         return
 
-    fvg_id, symbol, fvg_start, fvg_end, direction, timeframe, is_active = fvg
+    fvg_id, symbol, active_time ,fvg_start, fvg_end, direction, timeframe, is_active = fvg
 
     print(fvg)
 
@@ -261,9 +262,9 @@ def check_and_insert_retest_gaps(symbol,db_path: str,df_1m = None):
 
     # Step 4: Check the retest condition
     retest_detected = False
-    if direction.lower() == "bullish" and latest_row["Low"] <= fvg_end:
+    if direction.lower() == "bullish" and latest_row["Low"] <= fvg_end and latest_row["OpenTime"]>active_time:
         retest_detected = True
-    elif direction.lower() == "bearish" and latest_row["High"] >= fvg_start:
+    elif direction.lower() == "bearish" and latest_row["High"] >= fvg_start and latest_row["OpenTime"]>active_time :
         retest_detected = True
 
     # Step 5: If retest detected → update FairValueGap & insert into RetestGap
@@ -372,22 +373,23 @@ def trigger_trade(symbol,db_path: str, df_1m: pd.DataFrame):
 
     # Step 4: Calculate Initial StopLoss and Target
     if direction.lower() == "bullish":
-        initial_stoploss = fvg_start - (fvg_start*0.00005)
-        stoploss_points = latest_close - initial_stoploss
-        initial_target = latest_close + (3 * stoploss_points)
+        initial_stoploss = round(fvg_start - (fvg_start * 0.00005), 2)
+        stoploss_points = round(latest_close - initial_stoploss, 2)
+        initial_target = round(latest_close + (3 * stoploss_points), 2)
     else:
-        initial_stoploss = fvg_end + (fvg_end*0.00005)
-        stoploss_points = initial_stoploss - latest_close
-        initial_target = latest_close - (3 * stoploss_points)
+        initial_stoploss = round(fvg_end + (fvg_end * 0.00005), 2)
+        stoploss_points = round(initial_stoploss - latest_close, 2)
+        initial_target = round(latest_close - (3 * stoploss_points), 2)
 
-    # Step 5: Insert Trade
+    # Step 5: Insert Trade in Trades Table
     cur.execute("""
         INSERT INTO Trades 
-        (EntryTime, RetestGap, EntryCandle, Open, High, Low, Close, Volume, 
+        (Symbol,EntryTime, RetestGap, EntryCandle, Open, High, Low, Close, Volume, 
          Direction, CandleType, Stratagy, Lot, RemainingLot, 
          IntialStopLoss, IntialTarget, ModifiedStopLoss, ModifiedTarget, LastModifiedDate)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?,?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
+        symbol,
         datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
         retest_id,
         latest_time,
@@ -408,6 +410,24 @@ def trigger_trade(symbol,db_path: str, df_1m: pd.DataFrame):
         datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     ))
 
+    #Insert Trade in TradesStatus Table
+    # ✅ Get the last inserted Trade ID
+    trade_id = cur.lastrowid
+
+    # Step 6: Insert corresponding entry in TradeStatus Table
+    cur.execute("""
+        INSERT INTO TradeStatus
+        (Symbol,Quantity, EntryTime, Trade, EntryPrice, Status)
+        VALUES (?,?, ?, ?, ?, ?)
+    """, (
+        symbol,
+        200,
+        datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+        trade_id,  # <-- foreign key reference to Trades.Id
+        latest_candle["Close"],
+        "Running"
+    ))
+
     # Step 6: Optionally mark RetestGap as traded
     cur.execute("UPDATE RetestGap SET IsTraded = 1 WHERE Id = ?", (retest_id,))
 
@@ -415,3 +435,133 @@ def trigger_trade(symbol,db_path: str, df_1m: pd.DataFrame):
     conn.close()
 
     print(f"✅ Trade triggered and inserted for {direction.upper()} RetestGap ID {retest_id}")
+
+def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
+    """
+    Updates Trades and logs TradeStatus for PartialBooked, SL, TG trades.
+    Calculates ExitPrice and PnL for TradeStatus and updates IsOpen when trade is closed.
+    """
+
+    if df_1m.empty:
+        print("⚠️ df_1m is empty. Skipping update.")
+        return
+
+    latest_candle = df_1m.iloc[-1]
+    high = float(latest_candle["High"])
+    low = float(latest_candle["Low"])
+    close = float(latest_candle["Close"])
+
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+
+    # Fetch trades that have remaining lots
+    cur.execute("""
+        SELECT Id, EntryTime, RetestGap, EntryCandle, Open, High, Low, Close, Volume,
+               Direction, CandleType, Stratagy, Lot, RemainingLot, IntialStopLoss, IntialTarget,
+               ModifiedStopLoss, ModifiedTarget
+        FROM Trades
+        WHERE Direction IS NOT NULL AND RemainingLot > 0
+    """)
+    trades = cur.fetchall()
+
+    if not trades:
+        print("no trade found")
+        return
+
+    for trade in trades:
+        (trade_id, _, _, _, entry_open, entry_high, entry_low, entry_close, volume,
+         direction, candle_type, stratagy, lot, remaining_lot, sl, tg, mod_sl, mod_tg) = trade
+
+        total_lot = remaining_lot if remaining_lot else lot
+        status = "Active"
+        new_remaining_lot = total_lot
+        partial_executed = False
+        booked_qty = 0
+        exit_price = None
+        pnl = 0
+
+        # --- Bullish ---
+        if direction == "Bullish":
+            if low < sl:
+                status = "SL"
+                new_remaining_lot = 0
+                exit_price = sl
+                pnl = (exit_price - close) * total_lot
+            elif high >= tg:
+                status = "TG"
+                new_remaining_lot = 0
+                exit_price = tg
+                pnl = (exit_price - close) * total_lot
+            elif high >= entry_open + ((tg - entry_open) * 2 / 3):
+                status = "PartialBooked"
+                booked_qty = total_lot / 2
+                new_remaining_lot = total_lot - booked_qty
+                exit_price = entry_open + ((tg - entry_open) * 2 / 3)
+                pnl = (exit_price - close) * booked_qty
+                partial_executed = True
+
+        # --- Bearish ---
+        elif direction == "Bearish":
+            if high > sl:
+                status = "SL"
+                new_remaining_lot = 0
+                exit_price = sl
+                pnl = (close - exit_price) * total_lot
+            elif low <= tg:
+                status = "TG"
+                new_remaining_lot = 0
+                exit_price = tg
+                pnl = (close - exit_price) * total_lot
+            elif low <= entry_open - ((entry_open - tg) * 2 / 3):
+                status = "PartialBooked"
+                booked_qty = total_lot / 2
+                new_remaining_lot = total_lot - booked_qty
+                exit_price = entry_open - ((entry_open - tg) * 2 / 3)
+                pnl = (close - exit_price) * booked_qty
+                partial_executed = True
+
+        # --- Update Trades RemainingLot ---
+        cur.execute("""
+            UPDATE Trades
+            SET RemainingLot = ?, LastModifiedDate = ?
+            WHERE Id = ?
+        """, (new_remaining_lot, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), trade_id))
+
+        # --- Insert or Update TradeStatus ---
+        # Only update/insert for PartialBooked or closed trade
+        if status in ["PartialBooked", "SL", "TG"]:
+            # Check if PartialBooked record exists
+            cur.execute("""
+                SELECT Id FROM TradeStatus
+                WHERE Trade = ? AND Status = ?
+            """, (trade_id, "PartialBooked"))
+            existing = cur.fetchone()
+
+            quantity_to_log = booked_qty if status == "PartialBooked" else total_lot
+            is_open_flag = 1 if new_remaining_lot > 0 else 0
+
+            if status == "PartialBooked" and existing:
+                # Update existing record for PartialBooked
+                cur.execute("""
+                    UPDATE TradeStatus
+                    SET Quantity = Quantity + ?, ExitPrice = ?, Pnl = ?, IsOpen = ?, Timestamp = ?
+                    WHERE Id = ?
+                """, (booked_qty, exit_price, pnl, is_open_flag, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), existing[0]))
+                print(trade_id)
+            else:
+                # Insert new record
+                cur.execute("""
+                    INSERT INTO TradeStatus
+                    (Symbol,Trade, Status, Quantity, EntryPrice, IsOpen, LastModifiedDate)
+                    VALUES (?,?, ?, ?, ?,?, ?)
+                """, (symbol,trade_id, status, quantity_to_log, entry_close,  is_open_flag, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")))
+                print(trade_id)
+
+            if partial_executed:
+                print(f"🔸 Trade {trade_id} partially booked: {booked_qty} booked, {new_remaining_lot} remaining")
+            else:
+                print(f"❌ Trade {trade_id} closed with status {status}, PnL: {pnl}")
+
+    conn.commit()
+    conn.close()
+    print(f"✅ Trade statuses updated for {symbol}")
