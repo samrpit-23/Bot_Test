@@ -3,9 +3,10 @@ import time
 from datetime import datetime,timedelta,timezone
 import logging
 from helper import update_fvg_table,check_and_insert_retest_gaps,trigger_trade,fetch_delta_ohlc,update_trade_status
+import os
 
-
-db_path =r"""C:\Users\sit456\Desktop\JyBot\bot.db"""
+#db_path =r"""C:\Users\sit456\Desktop\JyBot\bot.db"""
+db_path = os.path.join(os.getcwd(), "bot.db")
 # --- SQLite DB Setup ---
 #conn = sqlite3.connect("trades.db", check_same_thread=False)
 conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -38,7 +39,7 @@ IST = timezone(timedelta(hours=5, minutes=30))
 
 def run_bot():
     symbol = "BTCUSD"
-    time_offset = timedelta(seconds=173)  # system clock leads by 173 seconds
+    time_offset = timedelta(seconds=0)  # system clock leads by 173 seconds
 
     while True:
         now = datetime.now(IST) - time_offset
