@@ -12,37 +12,26 @@ from helper import (
     check_and_insert_retest_gaps,
     trigger_trade,
     fetch_delta_ohlc,
-    update_trade_status
+    update_trade_status,
+    TABLE_SCHEMAS
 )
 
 # --- Database Path ---
-db_path = os.path.join(os.getcwd(), "bot.db")
+db_path = os.path.join(os.getcwd(), "bot2.db")
 print(f"✅ Using DB Path: {db_path}")
+if os.path.exists(db_path):
+    os.remove(db_path)
+    print("✅ Database file deleted successfully.")
+else:
+    print("⚠️ Database file not found.")
 
 # --- SQLite DB Setup ---
 conn = sqlite3.connect(db_path, check_same_thread=False)
 cursor = conn.cursor()
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS FairValueGaps (
-    Id INTEGER PRIMARY KEY AUTOINCREMENT,
-    Symbol TEXT NOT NULL,
-    ActiveTime TEXT,
-    FVGStart REAL,
-    FVGEnd REAL,
-    Direction TEXT,
-    FVGType TEXT,
-    TimeFrame TEXT,
-    Duration INTEGER,
-    GapSize REAL,
-    DistanceFromVWAP REAL,
-    IsActive INTEGER DEFAULT 1,
-    IsRetested INTEGER DEFAULT 0,
-    Priority INTEGER
-)
-""")
+# Ensure table exists
+cursor.execute(TABLE_SCHEMAS["FairValueGaps"])
 conn.commit()
-
+conn.close()
 # Define IST timezone
 IST = timezone(timedelta(hours=5, minutes=30))
 

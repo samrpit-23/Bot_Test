@@ -5,6 +5,7 @@ from datetime import datetime, timedelta,timezone
 import numpy as np
 import sqlite3
 from pytz import timezone as tz
+from TABLE_SCHEMAS import TABLE_SCHEMAS
 # --- VWAP calculation ---
 def add_vwap(df):
     typical_price = (df["High"] + df["Low"] + df["Close"]) / 3
@@ -12,8 +13,7 @@ def add_vwap(df):
     cumulative_vp = (typical_price * df["Volume"]).cumsum()
     df["VWAP"] = cumulative_vp / cumulative_vol
     return df
-
-    
+   
 def fetch_delta_ohlc(symbol: str, resolution: str, hours: int, rate_limit: float = 0.3):
     """
     Fetch OHLC from Delta Exchange assuming timestamps in API are IST-based epoch seconds.
@@ -96,26 +96,9 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m", ohlc_df=N
     cur = conn.cursor()
 
     # Ensure table exists
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS FairValueGaps (
-        Id INTEGER PRIMARY KEY AUTOINCREMENT,
-        Symbol TEXT NOT NULL,
-        ActiveTime TEXT,
-        FVGStart REAL,
-        FVGEnd REAL,
-        Direction TEXT,
-        FVGType TEXT,
-        TimeFrame TEXT,
-        Duration INTEGER,
-        GapSize REAL,
-        DistanceFromVWAP REAL,
-        IsActive INTEGER DEFAULT 1,
-        IsRetested INTEGER DEFAULT 0,
-        Priority INTEGER,
-        LastModifiedDate TIMESTAMP
-    );
-    """)
+    cur.execute(TABLE_SCHEMAS["FairValueGaps"])
 
+    print(TABLE_SCHEMAS["FairValueGaps"])
     # Fetch existing FVGs
     existing_fvgs = pd.read_sql_query(
         "SELECT * FROM FairValueGaps WHERE Symbol = ? AND TimeFrame = ?",
@@ -130,7 +113,9 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m", ohlc_df=N
 
         # Bullish FVG
         if prev2["High"] < curr["Low"]:
-            new_fvgs.append({
+            gap_size = round((curr["Low"] - prev2["High"])/prev2["High"]*100,2)
+            if gap_size >= 0.026:
+                new_fvgs.append({
                 "Symbol": symbol,
                 "ActiveTime": (pd.to_datetime(curr["OpenTime"]) + timedelta(minutes=int(timeframe.replace("m","")))).strftime("%Y-%m-%d %H:%M:%S"),
                 "FVGStart": prev2["High"],
@@ -139,14 +124,16 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m", ohlc_df=N
                 "FVGType": None,
                 "TimeFrame": timeframe,
                 "Duration": 0,
-                "GapSize": round((curr["Low"] - prev2["High"])/prev2["High"]*100,2),
+                "GapSize": gap_size ,
                 "DistanceFromVWAP": round((prev2["High"] - curr["VWAP"])/curr["VWAP"]*100,2),
                 "IsActive": 1
             })
 
         # Bearish FVG
         elif prev2["Low"] > curr["High"]:
-            new_fvgs.append({
+            gap_size = round((prev2["Low"] - curr["High"])/curr["High"]*100,2)
+            if gap_size >= 0.026:
+                new_fvgs.append({
                 "Symbol": symbol,
                 "ActiveTime": (pd.to_datetime(curr["OpenTime"]) + timedelta(minutes=int(timeframe.replace("m","")))).strftime("%Y-%m-%d %H:%M:%S"),
                 "FVGStart": curr["High"],
@@ -155,7 +142,7 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m", ohlc_df=N
                 "FVGType": None,
                 "TimeFrame": timeframe,
                 "Duration": 0,
-                "GapSize": round((prev2["Low"] - curr["High"])/curr["High"]*100,2),
+                "GapSize": gap_size ,
                 "DistanceFromVWAP": round((curr["High"] - curr["VWAP"])/curr["VWAP"]*100,2),
                 "IsActive": 1
             })
@@ -222,6 +209,8 @@ def check_and_insert_retest_gaps(symbol,db_path: str,df_1m = None):
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
 
+    # Ensure table exists
+    cur.execute(TABLE_SCHEMAS["RetestGap"])
     # Step 1: Fetch latest active FairValueGap (IsRetest=0, IsActive=1, TimeFrame=5m)
     cur.execute("""
         SELECT Id, Symbol, ActiveTime,FVGStart, FVGEnd, Direction, TimeFrame, IsActive
@@ -262,9 +251,11 @@ def check_and_insert_retest_gaps(symbol,db_path: str,df_1m = None):
 
     # Step 4: Check the retest condition
     retest_detected = False
-    if direction.lower() == "bullish" and latest_row["Low"] <= fvg_end and latest_row["OpenTime"]>active_time:
+    new_fvg_end = fvg_end + (fvg_end*0.00003)
+    new_fvg_start = fvg_start - (fvg_start*0.00005)
+    if direction.lower() == "bullish" and latest_row["Low"] <= new_fvg_end and latest_row["OpenTime"]>active_time:
         retest_detected = True
-    elif direction.lower() == "bearish" and latest_row["High"] >= fvg_start and latest_row["OpenTime"]>active_time :
+    elif direction.lower() == "bearish" and latest_row["High"] >= new_fvg_start and latest_row["OpenTime"]>active_time :
         retest_detected = True
 
     # Step 5: If retest detected → update FairValueGap & insert into RetestGap
@@ -330,6 +321,11 @@ def trigger_trade(symbol,db_path: str, df_1m: pd.DataFrame):
 
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
+
+    # Ensure table exists
+    cur.execute(TABLE_SCHEMAS["Trades"])
+    # Ensure table exists
+    cur.execute(TABLE_SCHEMAS["TradeStatus"])
 
     # Step 1: Fetch the latest untraded RetestGap
     cur.execute("""
@@ -436,9 +432,6 @@ def trigger_trade(symbol,db_path: str, df_1m: pd.DataFrame):
 
     print(f"✅ Trade triggered and inserted for {direction.upper()} RetestGap ID {retest_id}")
 
-import sqlite3
-import pandas as pd
-
 def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
     """
     Updates TradeStatus for all active trades (PartialBooked, SL, TG).
@@ -454,6 +447,7 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
 
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
+
 
     # Fetch all active trades for symbol
     cur.execute("""
