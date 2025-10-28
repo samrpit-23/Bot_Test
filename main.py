@@ -7,6 +7,7 @@ import os
 
 #db_path =r"""C:\Users\sit456\Desktop\JyBot\bot.db"""
 db_path = os.path.join(os.getcwd(), "bot.db")
+print(db_path)
 # --- SQLite DB Setup ---
 #conn = sqlite3.connect("trades.db", check_same_thread=False)
 conn = sqlite3.connect(db_path, check_same_thread=False)
