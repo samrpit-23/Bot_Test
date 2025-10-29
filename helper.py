@@ -237,9 +237,7 @@ def check_and_insert_retest_gaps(symbol,db_path: str,df_1m = None):
 
     fvg_id, symbol, active_time ,fvg_start, fvg_end, direction, timeframe, is_active = fvg
 
-    print(fvg)
-
-    # Step 2: Filter the DataFrame for this symbol
+     # Step 2: Filter the DataFrame for this symbol
     df_symbol = df_1m
 
     if df_symbol.empty:
