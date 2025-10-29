@@ -25,6 +25,8 @@ def fetch_delta_ohlc(symbol: str, resolution: str, hours: int, rate_limit: float
         hours (int): Number of past hours of data to fetch.
         rate_limit (float): Delay (in seconds) between paginated API calls.
     """
+    #beacuse some time 5 min 
+    time.sleep(0.5)
     base_url = "https://api.india.delta.exchange/v2/history/candles"
     headers = {'Accept': 'application/json'}
 
@@ -90,7 +92,7 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m", ohlc_df=N
 
     if ohlc_df is None:
         # fallback: fetch latest 24h data
-        ohlc_df = fetch_delta_ohlc(symbol, timeframe, hours=24, rate_limit=0.2)
+        ohlc_df = fetch_delta_ohlc(symbol, timeframe, hours=4, rate_limit=0.2)
 
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -218,7 +220,7 @@ def check_and_insert_retest_gaps(symbol,db_path: str,df_1m = None):
         WHERE TimeFrame = '5m'
           AND IsActive = 1
           AND IsRetested = 0
-          AND Duration <> '0'
+          --AND Duration <> '0'
           AND ActiveTime = (
               SELECT MAX(ActiveTime)
               FROM FairValueGaps
