@@ -373,11 +373,11 @@ def trigger_trade(symbol,db_path: str, df_1m: pd.DataFrame):
     if direction.lower() == "bullish":
         initial_stoploss = round(fvg_start - (fvg_start * 0.00005), 2)
         stoploss_points = round(latest_close - initial_stoploss, 2)
-        initial_target = round(latest_close + (3 * stoploss_points), 2)
+        initial_target = round(latest_close + (2 * stoploss_points), 2)
     else:
         initial_stoploss = round(fvg_end + (fvg_end * 0.00005), 2)
         stoploss_points = round(initial_stoploss - latest_close, 2)
-        initial_target = round(latest_close - (3 * stoploss_points), 2)
+        initial_target = round(latest_close - (2 * stoploss_points), 2)
 
     # Step 5: Insert Trade in Trades Table
     cur.execute("""
@@ -434,10 +434,14 @@ def trigger_trade(symbol,db_path: str, df_1m: pd.DataFrame):
 
     print(f"✅ Trade triggered and inserted for {direction.upper()} RetestGap ID {retest_id}")
 
+import sqlite3
+import pandas as pd
+
 def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
     """
-    Updates TradeStatus for all active trades (PartialBooked, SL, TG).
-    Uses stored ExitPrice in TradeStatus and updates PnL & IsOpen accordingly.
+    Updates TradeStatus for all active trades (PartialBooked, SL, TG, CostToCost).
+    Updates ExitPrice, RemainingLot, PnL, Status, and IsOpen accordingly.
+    Also updates corresponding Trades table.
     """
 
     if df_1m.empty:
@@ -450,13 +454,14 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
 
-
-    # Fetch all active trades for symbol
+    # Fetch all active trades for the given symbol
     cur.execute("""
-        SELECT TS.Id, TS.Trade, T.Direction, TS.ExitPrice, BookedQty, Status 
+        SELECT TS.Id, TS.Trade, T.Direction, T.IntialTarget, T.IntialStopLoss,
+               T.ModifiedTarget, T.ModifiedStopLoss, T.Lot, T.RemainingLot,
+               TS.EntryPrice, TS.ExitPrice, TS.Pnl, TS.Status, TS.IsOpen
         FROM TradeStatus TS
         INNER JOIN Trades T ON TS.Trade = T.Id
-        WHERE IsOpen = 1 AND Symbol = ?
+        WHERE TS.IsOpen = 1 AND T.Symbol = ?
     """, (symbol,))
     active_trades = cur.fetchall()
 
@@ -466,34 +471,95 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
         return
 
     for trade in active_trades:
-        ts_id, trade_id, direction, exit_price, booked_qty, status = trade
-        exit_price = float(exit_price or 0)
-        booked_qty = float(booked_qty or 0)
-        pnl = 0
+        (ts_id, trade_id, direction, initial_target, initial_stoploss, 
+         modified_target, modified_stoploss, lot, remaining_lot, 
+         entry_price, exit_price, pnl, status, is_open) = trade
 
-        # Handle SL or TG closure
-        if status in ("SL", "TG"):
-            if direction == "Bullish":
-                pnl = (exit_price - recent_close) * booked_qty
-            else:  # Bearish
-                pnl = (recent_close - exit_price) * booked_qty
+        updated = False  # track if any update is made
 
+        # === EXIT LOGIC ===
+        if status == "Running" and direction == "Bullish" and recent_close < initial_stoploss:
+            status = "SL"
+            exit_price = initial_stoploss
+            remaining_lot = 0
+            pnl = lot * (entry_price - exit_price)
+            is_open = 0
+            updated = True
+
+        elif status == "Running" and direction == "Bearish" and recent_close > initial_stoploss:
+            status = "SL"
+            exit_price = initial_stoploss
+            remaining_lot = 0
+            pnl = lot * (exit_price - entry_price)
+            is_open = 0
+            updated = True
+
+        elif status == "Running" and direction == "Bullish" and recent_close >= initial_target:
+            status = "PartialBooked"
+            modified_stoploss = entry_price
+            remaining_lot = lot / 2
+            exit_price = initial_target
+            pnl = ((lot - remaining_lot) * (exit_price - entry_price)) + (remaining_lot * (recent_close - entry_price))
+            updated = True
+
+        elif status == "Running" and direction == "Bearish" and recent_close <= initial_target:
+            status = "PartialBooked"
+            modified_stoploss = entry_price
+            remaining_lot = lot / 2
+            exit_price = initial_target
+            pnl = ((lot - remaining_lot) * (entry_price - exit_price)) + (remaining_lot * (entry_price - recent_close))
+            updated = True
+
+        elif status == "PartialBooked" and direction == "Bullish" and recent_close < modified_stoploss:
+            status = "CostToCost"
+            exit_price = (((lot - remaining_lot) * initial_target) + (remaining_lot * modified_stoploss)) / lot
+            remaining_lot = 0
+            pnl = lot * (entry_price - exit_price)
+            is_open = 0
+            updated = True
+
+        elif status == "PartialBooked" and direction == "Bearish" and recent_close > modified_stoploss:
+            status = "CostToCost"
+            exit_price = (((lot - remaining_lot) * initial_target) + (remaining_lot * modified_stoploss)) / lot
+            remaining_lot = 0
+            pnl = lot * (exit_price - entry_price)
+            is_open = 0
+            updated = True
+
+        elif status == "PartialBooked" and direction == "Bullish" and recent_close >= modified_target:
+            status = "FullBooked"
+            exit_price = (((lot - remaining_lot) * initial_target) + (remaining_lot * modified_target)) / lot
+            remaining_lot = 0
+            pnl = lot * (entry_price - exit_price)
+            is_open = 0
+            updated = True
+
+        elif status == "PartialBooked" and direction == "Bearish" and recent_close <= modified_target:
+            status = "FullBooked"
+            exit_price = (((lot - remaining_lot) * initial_target) + (remaining_lot * modified_target)) / lot
+            remaining_lot = 0
+            pnl = lot * (exit_price - entry_price)
+            is_open = 0
+            updated = True
+
+        # === DATABASE UPDATE SECTION ===
+        if updated:
+            # Update TradeStatus
             cur.execute("""
                 UPDATE TradeStatus
-                SET PnL = ?, IsOpen = 0, LastModifiedDate = CURRENT_TIMESTAMP
+                SET Status = ?, ExitPrice = ?, Pnl = ?, IsOpen = ?, ModifiedAt = CURRENT_TIMESTAMP
                 WHERE Id = ?
-            """, (pnl, ts_id))
-            print(f"✅ Trade {trade_id} closed ({status}) with PnL {pnl:.2f}")
+            """, (status, exit_price, pnl, is_open, ts_id))
 
-        # Handle Partial Book
-        elif status == "PartialBooked":
+            # Update Trades
             cur.execute("""
-                UPDATE TradeStatus
-                SET LastModifiedDate = CURRENT_TIMESTAMP
+                UPDATE Trades
+                SET RemainingLot = ?, ModifiedStopLoss = ?, ModifiedTarget = ?, IsActive = ?
                 WHERE Id = ?
-            """, (ts_id,))
-            print(f"ℹ️ Partial booked updated for Trade {trade_id}")
+            """, (remaining_lot, modified_stoploss, modified_target, is_open, trade_id))
+
+            print(f"✅ Updated Trade {trade_id} | Status: {status} | PnL: {pnl:.2f}")
 
     conn.commit()
     conn.close()
-    print("🔄 TradeStatus update completed.\n")
+    print("💾 All updates committed successfully.")

@@ -20,7 +20,7 @@ from helper import (
 db_path = os.path.join(os.getcwd(), "bot2.db")
 print(f"✅ Using DB Path: {db_path}")
 if os.path.exists(db_path):
-    #os.remove(db_path)
+    os.remove(db_path)
     print("✅ Database file deleted successfully.")
 else:
     print("⚠️ Database file not found.")
@@ -75,7 +75,7 @@ def run_bot():
         df_1m = fetch_delta_ohlc(symbol, "1m", hours=1, rate_limit=0.1)
         check_and_insert_retest_gaps(symbol, db_path, df_1m)
         trigger_trade(symbol, db_path, df_1m)
-        # update_trade_status(df_1m, symbol, db_path)
+        update_trade_status(df_1m, symbol, db_path)
 
         # --- Sleep until next 1-min mark ---
         next_minute = (now.replace(second=0, microsecond=0) + timedelta(minutes=1))
