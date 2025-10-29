@@ -114,7 +114,7 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m", ohlc_df=N
         # Bullish FVG
         if prev2["High"] < curr["Low"]:
             gap_size = round((curr["Low"] - prev2["High"])/prev2["High"]*100,2)
-            if gap_size >= 0.026:
+            if gap_size >= 0.02:
                 new_fvgs.append({
                 "Symbol": symbol,
                 "ActiveTime": (pd.to_datetime(curr["OpenTime"]) + timedelta(minutes=int(timeframe.replace("m","")))).strftime("%Y-%m-%d %H:%M:%S"),
@@ -125,14 +125,14 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m", ohlc_df=N
                 "TimeFrame": timeframe,
                 "Duration": 0,
                 "GapSize": gap_size ,
-                "DistanceFromVWAP": round((prev2["High"] - curr["VWAP"])/curr["VWAP"]*100,2),
+                "DistanceFromVWAP": round((curr["Low"] - curr["VWAP"])/curr["VWAP"]*100,2),
                 "IsActive": 1
             })
 
         # Bearish FVG
         elif prev2["Low"] > curr["High"]:
             gap_size = round((prev2["Low"] - curr["High"])/curr["High"]*100,2)
-            if gap_size >= 0.026:
+            if gap_size >= 0.02:
                 new_fvgs.append({
                 "Symbol": symbol,
                 "ActiveTime": (pd.to_datetime(curr["OpenTime"]) + timedelta(minutes=int(timeframe.replace("m","")))).strftime("%Y-%m-%d %H:%M:%S"),
@@ -357,7 +357,7 @@ def trigger_trade(symbol,db_path: str, df_1m: pd.DataFrame):
         return
 
     # Step 3: Get FVG_END from FairValueGaps table for stop loss
-    cur.execute("SELECT FVGStart,FVGEnd FROM FairValueGaps WHERE Id = ?", (fvg_id,))
+    cur.execute("SELECT FVGStart,FVGEnd,DistanceFromVWAP FROM FairValueGaps WHERE Id = ?", (fvg_id,))
     result = cur.fetchone()
     if not result:
         print("No corresponding FairValueGap found.")
@@ -366,7 +366,7 @@ def trigger_trade(symbol,db_path: str, df_1m: pd.DataFrame):
 
     fvg_start = result[0]
     fvg_end = result[1]
-
+    distance_from_vwap = result[2]
     # Step 4: Calculate Initial StopLoss and Target
     if direction.lower() == "bullish":
         initial_stoploss = round(fvg_start - (fvg_start * 0.00005), 2)
