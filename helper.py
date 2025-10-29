@@ -92,7 +92,7 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m", ohlc_df=N
 
     if ohlc_df is None:
         # fallback: fetch latest 24h data
-        ohlc_df = fetch_delta_ohlc(symbol, timeframe, hours=4, rate_limit=0.2)
+        ohlc_df = fetch_delta_ohlc(symbol, timeframe, hours=8, rate_limit=0.2)
 
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -496,7 +496,7 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
             modified_stoploss = entry_price
             remaining_lot = lot / 2
             exit_price = initial_target
-            pnl = ((lot - remaining_lot) * (exit_price - entry_price)) + (remaining_lot * (recent_close - entry_price))
+            pnl = ((lot - remaining_lot) * (entry_price - exit_price)) + (remaining_lot * (recent_close - entry_price))
             updated = True
 
         elif status == "Running" and direction == "Bearish" and recent_close <= initial_target:
@@ -504,14 +504,14 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
             modified_stoploss = entry_price
             remaining_lot = lot / 2
             exit_price = initial_target
-            pnl = ((lot - remaining_lot) * (entry_price - exit_price)) + (remaining_lot * (entry_price - recent_close))
+            pnl = ((lot - remaining_lot) * (exit_price - entry_price)) + (remaining_lot * (entry_price - recent_close))
             updated = True
 
         elif status == "PartialBooked" and direction == "Bullish" and recent_close < modified_stoploss:
             status = "CostToCost"
             exit_price = (((lot - remaining_lot) * initial_target) + (remaining_lot * modified_stoploss)) / lot
             remaining_lot = 0
-            pnl = lot * (entry_price - exit_price)
+            pnl = lot * (exit_price-entry_price)
             is_open = 0
             updated = True
 
@@ -519,7 +519,7 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
             status = "CostToCost"
             exit_price = (((lot - remaining_lot) * initial_target) + (remaining_lot * modified_stoploss)) / lot
             remaining_lot = 0
-            pnl = lot * (exit_price - entry_price)
+            pnl = lot * (entry_price-exit_price)
             is_open = 0
             updated = True
 
@@ -527,7 +527,7 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
             status = "FullBooked"
             exit_price = (((lot - remaining_lot) * initial_target) + (remaining_lot * modified_target)) / lot
             remaining_lot = 0
-            pnl = lot * (entry_price - exit_price)
+            pnl = lot * (exit_price-entry_price)
             is_open = 0
             updated = True
 
@@ -535,7 +535,7 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
             status = "FullBooked"
             exit_price = (((lot - remaining_lot) * initial_target) + (remaining_lot * modified_target)) / lot
             remaining_lot = 0
-            pnl = lot * (exit_price - entry_price)
+            pnl = lot * (entry_price-exit_price)
             is_open = 0
             updated = True
 
