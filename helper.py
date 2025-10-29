@@ -374,10 +374,12 @@ def trigger_trade(symbol,db_path: str, df_1m: pd.DataFrame):
         initial_stoploss = round(fvg_start - (fvg_start * 0.00005), 2)
         stoploss_points = round(latest_close - initial_stoploss, 2)
         initial_target = round(latest_close + (2 * stoploss_points), 2)
+        modified_target = round(latest_close + (3 * stoploss_points), 2)
     else:
         initial_stoploss = round(fvg_end + (fvg_end * 0.00005), 2)
         stoploss_points = round(initial_stoploss - latest_close, 2)
         initial_target = round(latest_close - (2 * stoploss_points), 2)
+        modified_target = round(latest_close - (3 * stoploss_points), 2)
 
     # Step 5: Insert Trade in Trades Table
     cur.execute("""
@@ -403,8 +405,8 @@ def trigger_trade(symbol,db_path: str, df_1m: pd.DataFrame):
         200,
         initial_stoploss,
         initial_target,
-        None,
-        None,
+        initial_stoploss,
+        modified_target,
         datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     ))
 
@@ -433,9 +435,6 @@ def trigger_trade(symbol,db_path: str, df_1m: pd.DataFrame):
     conn.close()
 
     print(f"✅ Trade triggered and inserted for {direction.upper()} RetestGap ID {retest_id}")
-
-import sqlite3
-import pandas as pd
 
 def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
     """
@@ -482,7 +481,7 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
             status = "SL"
             exit_price = initial_stoploss
             remaining_lot = 0
-            pnl = lot * (entry_price - exit_price)
+            pnl = lot * (exit_price - entry_price)
             is_open = 0
             updated = True
 
@@ -490,7 +489,7 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
             status = "SL"
             exit_price = initial_stoploss
             remaining_lot = 0
-            pnl = lot * (exit_price - entry_price)
+            pnl = lot * (entry_price - exit_price)
             is_open = 0
             updated = True
 
@@ -547,14 +546,14 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
             # Update TradeStatus
             cur.execute("""
                 UPDATE TradeStatus
-                SET Status = ?, ExitPrice = ?, Pnl = ?, IsOpen = ?, ModifiedAt = CURRENT_TIMESTAMP
+                SET Status = ?, ExitPrice = ?, Pnl = ?, IsOpen = ?, LastModifiedDate = CURRENT_TIMESTAMP
                 WHERE Id = ?
             """, (status, exit_price, pnl, is_open, ts_id))
 
             # Update Trades
             cur.execute("""
                 UPDATE Trades
-                SET RemainingLot = ?, ModifiedStopLoss = ?, ModifiedTarget = ?, IsActive = ?
+                SET RemainingLot = ?, ModifiedStopLoss = ?, ModifiedTarget = ?, IsActive = ? ,LastModifiedDate = CURRENT_TIMESTAMP
                 WHERE Id = ?
             """, (remaining_lot, modified_stoploss, modified_target, is_open, trade_id))
 
