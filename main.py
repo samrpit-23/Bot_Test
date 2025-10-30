@@ -7,6 +7,7 @@ import threading
 from flask import Flask, send_file, jsonify,request,Response
 import pandas as pd
 import json
+import numpy as np
 
 # --- Import your helper functions ---
 from helper import (
@@ -74,7 +75,7 @@ def get_table():
         return Response(body, status=400, mimetype="application/json")
 
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(db_path)
         # optional: set row factory if you like
         df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
         conn.close()
