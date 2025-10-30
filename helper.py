@@ -167,7 +167,7 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m", ohlc_df=N
             ))
 
     # Update Duration and deactivate if filled (use last candle close)
-    recent_close = ohlc_df.iloc[1]["Close"]
+    recent_close = ohlc_df.iloc[0]["Close"]
     IST = tz("Asia/Kolkata")
 
     for _, fvg in existing_fvgs.iterrows():
