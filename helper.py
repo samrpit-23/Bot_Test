@@ -167,7 +167,7 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m", ohlc_df=N
             ))
 
     # Update Duration and deactivate if filled (use last candle close)
-    recent_close = ohlc_df.iloc[-1]["Close"]
+    recent_close = ohlc_df.iloc[1]["Close"]
     IST = tz("Asia/Kolkata")
 
     for _, fvg in existing_fvgs.iterrows():
@@ -274,9 +274,9 @@ def check_and_insert_retest_gaps(symbol,db_path: str,df_1m = None):
         cur.execute("""
             INSERT INTO RetestGap (
                 Symbol, OpenTime, FairValueGap, TimeFrame, Direction, Type,
-                Open, High, Low, Close, Volume, IsActive
+                Open, High, Low, Close, Volume, IsActive,LastModifiedDate
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1,?)
         """, (
             symbol,
             latest_row["OpenTime"],
@@ -288,7 +288,8 @@ def check_and_insert_retest_gaps(symbol,db_path: str,df_1m = None):
             latest_row["High"],
             latest_row["Low"],
             latest_row["Close"],
-            float(latest_row["Volume"]) if latest_row["Volume"] is not None else 0
+            float(latest_row["Volume"]) if latest_row["Volume"] is not None else 0,
+            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         ))
 
         conn.commit()
