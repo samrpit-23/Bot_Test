@@ -26,10 +26,9 @@ def fetch_delta_ohlc(symbol: str, resolution: str, hours: int, rate_limit: float
         rate_limit (float): Delay (in seconds) between paginated API calls.
     """
     #beacuse some time 5 min 
-    time.sleep(2)
     base_url = "https://api.india.delta.exchange/v2/history/candles"
     headers = {'Accept': 'application/json'}
-
+    time.sleep(5)
     now = datetime.now()
     end_time = int(now.timestamp())
     start_time = int((now - timedelta(hours=hours)).timestamp())
@@ -168,7 +167,7 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m", ohlc_df=N
     # Update Duration and deactivate if filled (use last candle close)
     ohlc_df = ohlc_df.sort_values("OpenTime").reset_index(drop=True)
     recent_close = ohlc_df.iloc[-1]["Close"]
-    print(recent_close)
+    print(f"recent close from update fvg:-{recent_close}")
     IST = tz("Asia/Kolkata")
 
     for _, fvg in existing_fvgs.iterrows():
@@ -248,7 +247,7 @@ def check_and_insert_retest_gaps(symbol,db_path: str,df_1m = None):
 
     # Step 3: Take only the latest 1-minute candle
     latest_row = df_symbol.sort_values("OpenTime").iloc[-1]
-    print(latest_row.head())
+    #print(latest_row.head())
 
     # Step 4: Check the retest condition
     retest_detected = False
