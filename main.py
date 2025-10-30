@@ -20,7 +20,7 @@ from helper import (
 db_path = os.path.join(os.getcwd(), "bot2.db")
 print(f"✅ Using DB Path: {db_path}")
 if os.path.exists(db_path):
-    os.remove(db_path)
+    #os.remove(db_path)
     print("✅ Database file deleted successfully.")
 else:
     print("⚠️ Database file not found.")
