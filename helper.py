@@ -508,7 +508,7 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
             updated = True
 
         elif status == "PartialBooked" and direction == "Bullish" and recent_close < modified_stoploss:
-            status = "CostToCost"
+            status = "FullBooked"
             exit_price = (((lot - remaining_lot) * initial_target) + (remaining_lot * modified_stoploss)) / lot
             remaining_lot = 0
             pnl = lot * (exit_price-entry_price)
@@ -516,7 +516,7 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
             updated = True
 
         elif status == "PartialBooked" and direction == "Bearish" and recent_close > modified_stoploss:
-            status = "CostToCost"
+            status = "FullBooked"
             exit_price = (((lot - remaining_lot) * initial_target) + (remaining_lot * modified_stoploss)) / lot
             remaining_lot = 0
             pnl = lot * (entry_price-exit_price)
@@ -524,19 +524,23 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
             updated = True
 
         elif status == "PartialBooked" and direction == "Bullish" and recent_close >= modified_target:
-            status = "FullBooked"
-            exit_price = (((lot - remaining_lot) * initial_target) + (remaining_lot * modified_target)) / lot
-            remaining_lot = 0
+            #status = "FullBooked"
+            trade_points = entry_price-initial_stoploss
+            modified_target = modified_target+trade_points
+            modified_stoploss = modified_stoploss+trade_points
+            exit_price = (((lot - remaining_lot) * initial_target) + (remaining_lot * modified_stoploss)) / lot
+            #remaining_lot = 0
             pnl = lot * (exit_price-entry_price)
-            is_open = 0
             updated = True
 
         elif status == "PartialBooked" and direction == "Bearish" and recent_close <= modified_target:
-            status = "FullBooked"
-            exit_price = (((lot - remaining_lot) * initial_target) + (remaining_lot * modified_target)) / lot
-            remaining_lot = 0
+            #status = "FullBooked"
+            trade_points = initial_stoploss - entry_price
+            modified_target = modified_target-trade_points
+            modified_stoploss = modified_stoploss-trade_points
+            exit_price = (((lot - remaining_lot) * initial_target) + (remaining_lot * modified_stoploss)) / lot
+            #remaining_lot = 0
             pnl = lot * (entry_price-exit_price)
-            is_open = 0
             updated = True
 
         # === DATABASE UPDATE SECTION ===
@@ -559,4 +563,4 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
 
     conn.commit()
     conn.close()
-    print("💾 All updates committed successfully.")
+    print("💾 All trade status update committed successfully.")
