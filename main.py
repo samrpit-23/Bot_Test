@@ -55,29 +55,41 @@ def download_db():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+def df_to_json_string(df: pd.DataFrame) -> str:
+    # Replace NaN / inf with None so json.dumps writes null
+    df = df.replace({np.nan: None, np.inf: None, -np.inf: None})
+    # Convert datetimes to ISO strings
+    for col in df.select_dtypes(include=["datetime64[ns]"]).columns:
+        df[col] = df[col].dt.strftime("%Y-%m-%d %H:%M:%S")
+    # Convert to list-of-dicts (native python types)
+    data = df.to_dict(orient="records")
+    # Dump compact JSON (no trailing whitespace)
+    return json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+
 @app.route("/get_table", methods=["GET"])
 def get_table():
-    """
-    API endpoint: /api/get_table?name=YourTableName
-    Returns full table as JSON (records list).
-    """
     table_name = request.args.get("name")
-
     if not table_name:
-        return jsonify({"error": "Missing 'name' parameter"}), 400
-
-    if not os.path.exists(db_path):
-        return jsonify({"error": f"Database file not found: {db_path}"}), 500
+        body = json.dumps({"error":"Missing 'name' parameter"})
+        return Response(body, status=400, mimetype="application/json")
 
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(DB_PATH)
+        # optional: set row factory if you like
         df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
         conn.close()
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        body = json.dumps({"error": str(e)})
+        return Response(body, status=500, mimetype="application/json")
 
-    data = df.to_dict(orient="records")
-    return Response(json.dumps(data), mimetype="application/json")
+    # convert df to clean JSON string (NaN -> null)
+    json_data = df_to_json_string(df)
+    resp = Response(json_data, mimetype="application/json")
+    # set explicit Content-Length to avoid transfer ambiguities
+    resp.headers["Content-Length"] = str(len(json_data.encode("utf-8")))
+    # optional: prevent caching
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
 
 
 # --- Trading Bot Logic ---
