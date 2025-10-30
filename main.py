@@ -4,8 +4,9 @@ from datetime import datetime, timedelta, timezone
 import logging
 import os
 import threading
-from flask import Flask, send_file, jsonify,request
+from flask import Flask, send_file, jsonify,request,Response
 import pandas as pd
+import json
 
 # --- Import your helper functions ---
 from helper import (
@@ -75,8 +76,8 @@ def get_table():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-    # Convert to JSON
-    return jsonify(df.to_dict(orient="records"))
+    data = df.to_dict(orient="records")
+    return Response(json.dumps(data), mimetype="application/json")
 
 
 # --- Trading Bot Logic ---
