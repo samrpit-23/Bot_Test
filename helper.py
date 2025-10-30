@@ -28,7 +28,8 @@ def fetch_delta_ohlc(symbol: str, resolution: str, hours: int, rate_limit: float
     #beacuse some time 5 min 
     base_url = "https://api.india.delta.exchange/v2/history/candles"
     headers = {'Accept': 'application/json'}
-    time.sleep(5)
+    time.sleep(7)
+    print(datetime.now())
     now = datetime.now()
     end_time = int(now.timestamp())
     start_time = int((now - timedelta(hours=hours)).timestamp())
