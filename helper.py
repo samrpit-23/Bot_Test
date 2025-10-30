@@ -100,7 +100,6 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m", ohlc_df=N
     # Ensure table exists
     cur.execute(TABLE_SCHEMAS["FairValueGaps"])
 
-    print(TABLE_SCHEMAS["FairValueGaps"])
     # Fetch existing FVGs
     existing_fvgs = pd.read_sql_query(
         "SELECT * FROM FairValueGaps WHERE Symbol = ? AND TimeFrame = ?",
@@ -167,7 +166,9 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m", ohlc_df=N
             ))
 
     # Update Duration and deactivate if filled (use last candle close)
-    recent_close = ohlc_df.iloc[0]["Close"]
+    ohlc_df = ohlc_df.sort_values("OpenTime").reset_index(drop=True)
+    recent_close = ohlc_df.iloc[-1]["Close"]
+    print(recent_close)
     IST = tz("Asia/Kolkata")
 
     for _, fvg in existing_fvgs.iterrows():
