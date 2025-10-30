@@ -4,7 +4,8 @@ from datetime import datetime, timedelta, timezone
 import logging
 import os
 import threading
-from flask import Flask, send_file, jsonify
+from flask import Flask, send_file, jsonify,request
+import pandas as pd
 
 # --- Import your helper functions ---
 from helper import (
@@ -52,6 +53,30 @@ def download_db():
         return send_file(db_path, as_attachment=True)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route("/get_table", methods=["GET"])
+def get_table():
+    """
+    API endpoint: /api/get_table?name=YourTableName
+    Returns full table as JSON (records list).
+    """
+    table_name = request.args.get("name")
+
+    if not table_name:
+        return jsonify({"error": "Missing 'name' parameter"}), 400
+
+    if not os.path.exists(db_path):
+        return jsonify({"error": f"Database file not found: {db_path}"}), 500
+
+    try:
+        conn = sqlite3.connect(db_path)
+        df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
+        conn.close()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    # Convert to JSON
+    return jsonify(df.to_dict(orient="records"))
 
 
 # --- Trading Bot Logic ---
