@@ -26,7 +26,7 @@ def fetch_delta_ohlc(symbol: str, resolution: str, hours: int, rate_limit: float
         rate_limit (float): Delay (in seconds) between paginated API calls.
     """
     #beacuse some time 5 min 
-    time.sleep(0.5)
+    time.sleep(2)
     base_url = "https://api.india.delta.exchange/v2/history/candles"
     headers = {'Accept': 'application/json'}
 
