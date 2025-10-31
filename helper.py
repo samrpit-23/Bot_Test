@@ -173,21 +173,41 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m", ohlc_df=N
 
     for _, fvg in existing_fvgs.iterrows():
         if fvg["IsActive"] == 1:
-            active_time_ist = IST.localize(pd.to_datetime(fvg["ActiveTime"]))
-            duration_min = int((datetime.now(IST) - active_time_ist).total_seconds() // 60)
-            tf_minutes = int(timeframe.replace("m",""))
-            rounded_duration = (duration_min // tf_minutes) * tf_minutes
-
-            cur.execute("UPDATE FairValueGaps SET Duration=? WHERE Id=?", (rounded_duration, fvg["Id"]))
-
-            # Deactivate based on last closed candle
-            if fvg["Direction"] == "Bearish" and recent_close > fvg["FVGEnd"]:
-                cur.execute("UPDATE FairValueGaps SET IsActive=0 , LastModifiedDate = ? WHERE Id=?", (fvg["Id"],datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),))
-                cur.execute("UPDATE RetestGap SET IsActive=0 , LastModifiedDate = ? WHERE FairValueGap=?", (fvg["Id"],datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),))
-
-            elif fvg["Direction"] == "Bullish" and recent_close < fvg["FVGStart"]:
-                cur.execute("UPDATE FairValueGaps SET IsActive=0 , LastModifiedDate = ? WHERE Id=?", (fvg["Id"],datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),))
-                cur.execute("UPDATE RetestGap SET IsActive=0 , LastModifiedDate = ? WHERE FairValueGap=?", (fvg["Id"],datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),))
+            try:
+                active_time_ist = IST.localize(pd.to_datetime(fvg["ActiveTime"])) if pd.to_datetime(fvg["ActiveTime"]).tzinfo is None else pd.to_datetime(fvg["ActiveTime"]).tz_convert(IST)
+                duration_min = int((datetime.now(IST) - active_time_ist).total_seconds() // 60)
+                tf_minutes = int(timeframe.replace("m",""))
+                rounded_duration = (duration_min // tf_minutes) * tf_minutes
+    
+                print(f"Checking {fvg['Id']} ({fvg['Direction']}) | recent_close={recent_close}")
+    
+                # Deactivate based on last closed candle
+                if fvg["Direction"] == "Bearish" and recent_close > fvg["FVGEnd"]:
+                    print(f"Deactivating Bearish {fvg['Id']}")
+                    cur.execute(
+                        "UPDATE FairValueGaps SET IsActive=0, LastModifiedDate=? WHERE Id=?",
+                        (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), fvg["Id"])
+                    )
+                    cur.execute(
+                        "UPDATE RetestGap SET IsActive=0, LastModifiedDate=? WHERE FairValueGap=?",
+                        (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), fvg["Id"])
+                    )
+    
+                elif fvg["Direction"] == "Bullish" and recent_close < fvg["FVGStart"]:
+                    print(f"Deactivating Bullish {fvg['Id']}")
+                    cur.execute(
+                        "UPDATE FairValueGaps SET IsActive=0, LastModifiedDate=? WHERE Id=?",
+                        (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), fvg["Id"])
+                    )
+                    cur.execute(
+                        "UPDATE RetestGap SET IsActive=0, LastModifiedDate=? WHERE FairValueGap=?",
+                        (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), fvg["Id"])
+                    )
+    
+                cur.execute("UPDATE FairValueGaps SET Duration=? WHERE Id=?", (rounded_duration, fvg["Id"]))
+    
+            except Exception as e:
+                print(f"Error processing FVG {fvg['Id']}: {e}")
 
     conn.commit()
     conn.close()
