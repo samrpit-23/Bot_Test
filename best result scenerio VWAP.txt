@@ -1,0 +1,12 @@
+As per 8h VWAP calculation
+VWAP Range for BEARISH
+-1 to -0.30
+or
+>0.70
+
+VWAP range FOR BULLISH 
+for bullish
+0.32 to 0.61 
+
+SL % 
+MAX 0.00287

@@ -96,7 +96,7 @@ def get_table():
 # --- Trading Bot Logic ---
 def run_bot():
     symbol = "BTCUSD"
-    time_offset = timedelta(seconds=0)
+    time_offset = timedelta(seconds=148)
 
     while True:
         now = datetime.now(IST) - time_offset

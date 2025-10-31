@@ -178,12 +178,12 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m", ohlc_df=N
                 duration_min = int((datetime.now(IST) - active_time_ist).total_seconds() // 60)
                 tf_minutes = int(timeframe.replace("m",""))
                 rounded_duration = (duration_min // tf_minutes) * tf_minutes
-    
-                print(f"Checking {fvg['Id']} ({fvg['Direction']}) | recent_close={recent_close}")
-    
+
+                #print(f"Checking {fvg['Id']} ({fvg['Direction']}) | recent_close={recent_close}")
+
                 # Deactivate based on last closed candle
                 if fvg["Direction"] == "Bearish" and recent_close > fvg["FVGEnd"]:
-                    print(f"Deactivating Bearish {fvg['Id']}")
+                    #print(f"Deactivating Bearish {fvg['Id']}")
                     cur.execute(
                         "UPDATE FairValueGaps SET IsActive=0, LastModifiedDate=? WHERE Id=?",
                         (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), fvg["Id"])
@@ -192,9 +192,9 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m", ohlc_df=N
                         "UPDATE RetestGap SET IsActive=0, LastModifiedDate=? WHERE FairValueGap=?",
                         (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), fvg["Id"])
                     )
-    
+
                 elif fvg["Direction"] == "Bullish" and recent_close < fvg["FVGStart"]:
-                    print(f"Deactivating Bullish {fvg['Id']}")
+                    #print(f"Deactivating Bullish {fvg['Id']}")
                     cur.execute(
                         "UPDATE FairValueGaps SET IsActive=0, LastModifiedDate=? WHERE Id=?",
                         (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), fvg["Id"])
@@ -203,9 +203,9 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m", ohlc_df=N
                         "UPDATE RetestGap SET IsActive=0, LastModifiedDate=? WHERE FairValueGap=?",
                         (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), fvg["Id"])
                     )
-    
+
                 cur.execute("UPDATE FairValueGaps SET Duration=? WHERE Id=?", (rounded_duration, fvg["Id"]))
-    
+
             except Exception as e:
                 print(f"Error processing FVG {fvg['Id']}: {e}")
 
@@ -477,7 +477,7 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
     cur.execute("""
         SELECT TS.Id, TS.Trade, T.Direction, T.IntialTarget, T.IntialStopLoss,
                T.ModifiedTarget, T.ModifiedStopLoss, T.Lot, T.RemainingLot,
-               TS.EntryPrice, TS.ExitPrice, TS.Pnl, TS.Status, TS.IsOpen
+               TS.EntryPrice, TS.ExitPrice, TS.Pnl, TS.Status, TS.IsOpen , TS.EntryTime
         FROM TradeStatus TS
         INNER JOIN Trades T ON TS.Trade = T.Id
         WHERE TS.IsOpen = 1 AND T.Symbol = ?
@@ -492,9 +492,18 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
     for trade in active_trades:
         (ts_id, trade_id, direction, initial_target, initial_stoploss, 
          modified_target, modified_stoploss, lot, remaining_lot, 
-         entry_price, exit_price, pnl, status, is_open) = trade
+         entry_price, exit_price, pnl, status, is_open ,entry_time_str) = trade
+        
+        try:
+            # Try ISO format first (e.g. "2025-10-31T12:30:00" or "2025-10-31 12:30:00")
+            entry_time = datetime.fromisoformat(entry_time_str)
+        except ValueError:
+            # Fallback for SQLite default format
+            entry_time = datetime.strptime(entry_time_str, "%Y-%m-%d %H:%M:%S")
 
         updated = False  # track if any update is made
+
+        duration_min = int((datetime.utcnow() - entry_time).total_seconds() // 60)
 
         # === EXIT LOGIC ===
         if status == "Running" and direction == "Bullish" and recent_close < initial_stoploss:
@@ -566,6 +575,13 @@ def update_trade_status(df_1m: pd.DataFrame, symbol: str, db_path: str):
             updated = True
 
         # === DATABASE UPDATE SECTION ===
+        # Always update Duration, even if trade logic doesn’t change
+        cur.execute("""
+            UPDATE TradeStatus
+            SET Duration = ?, LastModifiedDate = CURRENT_TIMESTAMP
+            WHERE Id = ?
+        """, (duration_min, ts_id))
+
         if updated:
             # Update TradeStatus
             cur.execute("""
