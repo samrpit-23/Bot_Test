@@ -182,12 +182,12 @@ def update_fvg_table(db_path: str, symbol: str, timeframe: str = "5m", ohlc_df=N
 
             # Deactivate based on last closed candle
             if fvg["Direction"] == "Bearish" and recent_close > fvg["FVGEnd"]:
-                cur.execute("UPDATE FairValueGaps SET IsActive=0 WHERE Id=?", (fvg["Id"],))
-                cur.execute("UPDATE RetestGap SET IsActive=0 WHERE FairValueGap=?", (fvg["Id"],))
+                cur.execute("UPDATE FairValueGaps SET IsActive=0 , LastModifiedDate = ? WHERE Id=?", (fvg["Id"],datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),))
+                cur.execute("UPDATE RetestGap SET IsActive=0 , LastModifiedDate = ? WHERE FairValueGap=?", (fvg["Id"],datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),))
 
             elif fvg["Direction"] == "Bullish" and recent_close < fvg["FVGStart"]:
-                cur.execute("UPDATE FairValueGaps SET IsActive=0 WHERE Id=?", (fvg["Id"],))
-                cur.execute("UPDATE RetestGap SET IsActive=0 WHERE FairValueGap=?", (fvg["Id"],))
+                cur.execute("UPDATE FairValueGaps SET IsActive=0 , LastModifiedDate = ? WHERE Id=?", (fvg["Id"],datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),))
+                cur.execute("UPDATE RetestGap SET IsActive=0 , LastModifiedDate = ? WHERE FairValueGap=?", (fvg["Id"],datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),))
 
     conn.commit()
     conn.close()
@@ -252,8 +252,8 @@ def check_and_insert_retest_gaps(symbol,db_path: str,df_1m = None):
 
     # Step 4: Check the retest condition
     retest_detected = False
-    new_fvg_end = fvg_end + (fvg_end*0.00003)
-    new_fvg_start = fvg_start - (fvg_start*0.00005)
+    new_fvg_end = fvg_end + (fvg_end*0.00011) # check candle near gap give some extra space by 10 to 11 points for BTC
+    new_fvg_start = fvg_start - (fvg_start*0.00011)
     if direction.lower() == "bullish" and latest_row["Low"] <= new_fvg_end and latest_row["OpenTime"]>active_time:
         retest_detected = True
     elif direction.lower() == "bearish" and latest_row["High"] >= new_fvg_start and latest_row["OpenTime"]>active_time :
@@ -296,15 +296,15 @@ def check_and_insert_retest_gaps(symbol,db_path: str,df_1m = None):
         conn.commit()
 
     # Step 6: If the FVG becomes inactive → deactivate its related RetestGap
-    cur.execute("SELECT IsActive FROM FairValueGaps WHERE Id = ?", (fvg_id,))
-    is_active_now = cur.fetchone()
-    if is_active_now and is_active_now[0] == 0:
-        cur.execute("""
-            UPDATE RetestGap
-            SET IsActive = 0
-            WHERE FairValueGap = ?
-        """, (fvg_id,))
-        conn.commit()
+    #cur.execute("SELECT IsActive FROM FairValueGaps WHERE Id = ?", (fvg_id,))
+    #is_active_now = cur.fetchone()
+    #if is_active_now and is_active_now[0] == 0:
+    #    cur.execute("""
+    #        UPDATE RetestGap
+    #        SET IsActive = 0
+    #        WHERE FairValueGap = ?
+    #   """, (fvg_id,))
+    #    conn.commit()
 
     conn.close()
 
